@@ -1,0 +1,7 @@
+config.json
+.monitor_state.json
+monitor.log
+__pycache__/
+*.pyc
+.claude/
+WORK_LOG.md
