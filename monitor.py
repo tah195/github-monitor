@@ -18,7 +18,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from html import escape as html_escape
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # Windows 터미널 UTF-8 출력 설정
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -96,6 +96,18 @@ def now():
     return datetime.now().strftime("%H:%M:%S")
 
 
+def to_kst(dt_str):
+    """GitHub API UTC 문자열 → KST (UTC+9) 포맷 문자열로 변환"""
+    if not dt_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        kst = dt.astimezone(timezone(timedelta(hours=9)))
+        return kst.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return dt_str[:16].replace("T", " ")
+
+
 # ==================== GitHub API ====================
 def get_github_events(cfg):
     url = f"https://api.github.com/users/{GITHUB_USER}/events/public"
@@ -130,7 +142,7 @@ def format_event(event):
     repo = event.get("repo", {}).get("name", "unknown/unknown")
     payload = event.get("payload", {})
 
-    commit_count = len(payload.get("commits", [])) or payload.get("size") or payload.get("distinct_size", 0)
+    commit_count = payload.get("size") or payload.get("distinct_size") or len(payload.get("commits", []))
     type_map = {
         "PushEvent":         ("📦", f"커밋 푸시 ({commit_count}개)"),
         "CreateEvent":       ("✨", f"{payload.get('ref_type', '브랜치')} 생성"),
@@ -158,11 +170,11 @@ def build_email_body(events_with_msg):
     for ev, msg in events_with_msg:
         repo_name = ev.get("repo", {}).get("name", "")
         repo_url = f"https://github.com/{repo_name}"
-        created = ev.get("created_at", "")[:16].replace("T", " ")
+        created = to_kst(ev.get("created_at", ""))
         lines.append(
             f"<li>{msg} &nbsp; "
             f'<a href="{repo_url}">{repo_name}</a> '
-            f"<span style='color:#888'>({created} UTC)</span>"
+            f"<span style='color:#888'>({created} KST)</span>"
         )
         # PushEvent: 커밋 메시지 목록 추가
         if ev.get("type") == "PushEvent":
@@ -251,8 +263,8 @@ def notify_mattermost(events_with_msg, cfg):
     for ev, msg in events_with_msg:
         repo_name = ev.get("repo", {}).get("name", "")
         repo_url = f"https://github.com/{repo_name}"
-        created = ev.get("created_at", "")[:16].replace("T", " ")
-        lines.append(f"- {msg} · [{repo_name}]({repo_url}) `{created} UTC`")
+        created = to_kst(ev.get("created_at", ""))
+        lines.append(f"- {msg} · [{repo_name}]({repo_url}) `{created} KST`")
         # PushEvent: 커밋 메시지 목록 추가
         if ev.get("type") == "PushEvent":
             commits = ev.get("payload", {}).get("commits", [])
