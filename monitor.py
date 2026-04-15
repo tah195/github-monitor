@@ -40,10 +40,8 @@ DEFAULT_CONFIG = {
     "check_interval": 300,     # 확인 주기 (초)
     "notify_types": [
         "PushEvent",
-        "CreateEvent",
         "PullRequestEvent",
         "ReleaseEvent",
-        "PublicEvent",
     ],
 }
 
@@ -108,6 +106,19 @@ def to_kst(dt_str):
         return dt_str[:16].replace("T", " ")
 
 
+# ==================== 이벤트 필터 ====================
+def _should_notify(event, notify_types):
+    etype = event.get("type")
+    if etype not in notify_types:
+        return False
+    # PullRequestEvent는 merged된 경우만 알림
+    if etype == "PullRequestEvent":
+        payload = event.get("payload", {})
+        pr = payload.get("pull_request", {})
+        return payload.get("action") == "closed" and pr.get("merged") is True
+    return True
+
+
 # ==================== GitHub API ====================
 def get_github_events(cfg):
     url = f"https://api.github.com/users/{GITHUB_USER}/events/public"
@@ -143,11 +154,12 @@ def format_event(event):
     payload = event.get("payload", {})
 
     commit_count = payload.get("size") or payload.get("distinct_size") or len(payload.get("commits", []))
+    push_label = f"커밋 푸시 ({commit_count}개)" if commit_count else "커밋 푸시"
     type_map = {
-        "PushEvent":         ("📦", f"커밋 푸시 ({commit_count}개)"),
+        "PushEvent":         ("📦", push_label),
         "CreateEvent":       ("✨", f"{payload.get('ref_type', '브랜치')} 생성"),
         "DeleteEvent":       ("🗑️", f"{payload.get('ref_type', '브랜치')} 삭제"),
-        "PullRequestEvent":  ("🔀", f"PR {payload.get('action', '')}"),
+        "PullRequestEvent":  ("🔀", "PR merged"),
         "IssuesEvent":       ("📋", f"이슈 {payload.get('action', '')}"),
         "IssueCommentEvent": ("💬", "이슈 댓글"),
         "ForkEvent":         ("🍴", "포크"),
@@ -306,19 +318,23 @@ def run_check(cfg):
 
     new_events = []
     found_last = False
+    notify_types = cfg.get("notify_types", DEFAULT_CONFIG["notify_types"])
     for ev in events:
         if str(ev["id"]) == str(last_id):
             found_last = True
             break
-        if ev.get("type") in cfg.get("notify_types", DEFAULT_CONFIG["notify_types"]):
+        if _should_notify(ev, notify_types):
             new_events.append(ev)
 
-    # last_id가 API 응답(최대 30개) 밖에 있는 경우 → 상태 재초기화, 알림 없이 종료
+    # last_id가 API 응답(최대 30개) 밖에 있는 경우 → 쌓인 이벤트 알림 후 상태 갱신
     if not found_last:
         state["last_event_id"] = str(events[0]["id"])
         save_state(state)
-        print(f"[{now()}] 상태 불일치 감지 (last_id가 최근 이벤트 범위 밖) — 상태 재초기화 완료.")
-        return
+        if new_events:
+            print(f"[{now()}] 상태 불일치 — 최근 이벤트 {len(new_events)}개 알림 전송 후 재초기화.")
+        else:
+            print(f"[{now()}] 상태 불일치 감지 — 상태 재초기화 완료.")
+            return
 
     if new_events:
         state["last_event_id"] = str(events[0]["id"])
