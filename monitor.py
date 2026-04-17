@@ -153,7 +153,9 @@ def format_event(event):
     repo = event.get("repo", {}).get("name", "unknown/unknown")
     payload = event.get("payload", {})
 
-    commit_count = payload.get("size") or payload.get("distinct_size") or len(payload.get("commits", []))
+    size = payload.get("size")
+    distinct = payload.get("distinct_size")
+    commit_count = size if size is not None else (distinct if distinct is not None else len(payload.get("commits", [])))
     push_label = f"커밋 푸시 ({commit_count}개)" if commit_count else "커밋 푸시"
     type_map = {
         "PushEvent":         ("📦", push_label),
